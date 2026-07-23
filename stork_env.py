@@ -183,7 +183,8 @@ class StorkGameEnv(gym.Env):
         self._page.keyboard.press("Space")
         self._ready_space_pressed = True
         self._log(f"[{reason}] 준비 Space 입력 완료")
-        self._press_ready_space(f"시작")
+        self._page.keyboard.press("Space")
+        
         
 
     def _capture_frame(self):
