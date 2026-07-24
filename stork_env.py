@@ -92,8 +92,13 @@ class StorkGameEnv(gym.Env):
         initial_wait_seconds=25.0,
         upright_angle=5.0,
         terminal_angle=60.0,
-        idle_after_terminal=5.0,
+        idle_after_terminal=3.0,
         upright_timeout=15.0,
+        upright_detection_retry_seconds=3.0,
+        upright_detection_max_retries=1,
+        upright_fallen_retry_seconds=3.0,
+        upright_fallen_max_retries=1,
+        initial_tracking_timeout=120.0,
         action_duration=0.06,
         observation_delay=0.025,
         max_episode_steps=10_000,
@@ -110,6 +115,19 @@ class StorkGameEnv(gym.Env):
         self.terminal_angle = float(terminal_angle)
         self.idle_after_terminal = float(idle_after_terminal)
         self.upright_timeout = float(upright_timeout)
+        self.upright_detection_retry_seconds = float(
+            upright_detection_retry_seconds
+        )
+        self.upright_detection_max_retries = int(
+            upright_detection_max_retries
+        )
+        self.upright_fallen_retry_seconds = float(
+            upright_fallen_retry_seconds
+        )
+        self.upright_fallen_max_retries = int(
+            upright_fallen_max_retries
+        )
+        self.initial_tracking_timeout = float(initial_tracking_timeout)
         self.action_duration = float(action_duration)
         self.observation_delay = float(observation_delay)
         self.max_episode_steps = int(max_episode_steps)
@@ -134,6 +152,7 @@ class StorkGameEnv(gym.Env):
         self._episode_active = False
         self._ready_space_pressed = False
         self._needs_full_reload = False
+        self._initial_untrained_game_running = False
 
         self._launch_and_prepare_first_game()
 
@@ -155,9 +174,16 @@ class StorkGameEnv(gym.Env):
             self._page.goto(GAME_URL)
             self._wait_initial_loading()
             self._page.mouse.click(480, 270)
+            self._press_ready_space("에피소드 1 준비")
             self._log("[초기화] 화면 중앙 클릭 완료")
             time.sleep(1.0)
             self._press_ready_space("에피소드 1 준비")
+            self._angle_history.clear()
+            self._previous_angle = 0.0
+            self._initial_untrained_game_running = True
+            self._log(
+                "[비학습 워밍업 시작] 이 게임은 학습 에피소드에 포함하지 않습니다."
+            )
         except Exception:
             self.close()
             raise
@@ -183,9 +209,6 @@ class StorkGameEnv(gym.Env):
         self._page.keyboard.press("Space")
         self._ready_space_pressed = True
         self._log(f"[{reason}] 준비 Space 입력 완료")
-        self._page.keyboard.press("Space")
-        
-        
 
     def _capture_frame(self):
         # cv_test.py와 동일하게 페이지 전체를 캡처합니다.
@@ -250,7 +273,7 @@ class StorkGameEnv(gym.Env):
             dtype=np.float32,
         )
         info = {
-            "episode": display_episode,
+            "episode_number": display_episode,
             "episode_steps": self._episode_steps,
             "angle_degrees": float(current_angle),
             "smoothed_angle_degrees": float(smooth_angle),
@@ -266,6 +289,10 @@ class StorkGameEnv(gym.Env):
         )
         deadline = time.monotonic() + self.upright_timeout
         last_info = None
+        detection_failure_started = None
+        fallen_started = None
+        detection_retry_count = 0
+        fallen_retry_count = 0
         while time.monotonic() < deadline:
             observation, info = self._observe("직립 대기")
             last_info = info
@@ -275,6 +302,68 @@ class StorkGameEnv(gym.Env):
                     f"-> 시작 Space를 누릅니다."
                 )
                 return observation, info
+
+            if info["angle_detected"]:
+                detection_failure_started = None
+
+                # 직립 대기 중인데 이미 종료 각도를 넘은 자세가 계속 보이면
+                # 게임 화면이 넘어진 상태에 고정된 것이므로 Space로 복구합니다.
+                if abs(info["angle_degrees"]) > self.terminal_angle:
+                    now = time.monotonic()
+                    if fallen_started is None:
+                        fallen_started = now
+
+                    fallen_seconds = now - fallen_started
+                    can_retry_fallen = (
+                        self.upright_fallen_retry_seconds > 0.0
+                        and fallen_retry_count
+                        < self.upright_fallen_max_retries
+                    )
+                    if (
+                        can_retry_fallen
+                        and fallen_seconds
+                        >= self.upright_fallen_retry_seconds
+                    ):
+                        fallen_retry_count += 1
+                        self._page.keyboard.press("Space")
+                        self._log(
+                            "[직립 복구] "
+                            f"종료 각도 {info['angle_degrees']:+.2f}도가 "
+                            f"{fallen_seconds:.1f}초 지속 -> "
+                            f"스페이스 입력 ({fallen_retry_count}/"
+                            f"{self.upright_fallen_max_retries})"
+                        )
+                        fallen_started = now
+                else:
+                    # 각도는 검출되고 있으며 아직 자연스럽게 직립 상태로
+                    # 돌아오는 중인 5~60도 구간에서는 Space를 누르지 않습니다.
+                    fallen_started = None
+            else:
+                fallen_started = None
+                now = time.monotonic()
+                if detection_failure_started is None:
+                    detection_failure_started = now
+
+                failure_seconds = now - detection_failure_started
+                can_retry = (
+                    self.upright_detection_retry_seconds > 0.0
+                    and detection_retry_count
+                    < self.upright_detection_max_retries
+                )
+                if (
+                    can_retry
+                    and failure_seconds
+                    >= self.upright_detection_retry_seconds
+                ):
+                    detection_retry_count += 1
+                    self._page.keyboard.press("Space")
+                    self._log(
+                        "[직립 복구] "
+                        f"각도 미검출 {failure_seconds:.1f}초 지속 -> "
+                        f"스페이스 입력 ({detection_retry_count}/"
+                        f"{self.upright_detection_max_retries})"
+                    )
+                    detection_failure_started = now
             time.sleep(0.05)
 
         raise RuntimeError(
@@ -291,9 +380,56 @@ class StorkGameEnv(gym.Env):
         time.sleep(1.0)
         self._press_ready_space("강제 초기화")
 
+    def _finish_initial_untrained_game(self):
+        """첫 게임은 행동 없이 60도 초과까지 관찰한 뒤 학습 준비 상태로 만듭니다."""
+        self._log(
+            "[비학습 워밍업 추적] 모델 준비 완료. 방향키를 누르지 않고 "
+            f"|각도| > {self.terminal_angle:.1f}도가 될 때까지 기다립니다."
+        )
+        deadline = time.monotonic() + self.initial_tracking_timeout
+        last_info = None
+
+        while time.monotonic() < deadline:
+            _, info = self._observe("비학습 워밍업")
+            last_info = info
+            if info["angle_detected"] and abs(info["angle_degrees"]) > self.terminal_angle:
+                self._log(
+                    f"[비학습 워밍업 종료] |각도|="
+                    f"{abs(info['angle_degrees']):.2f}도 > "
+                    f"{self.terminal_angle:.1f}도"
+                )
+                self._log(
+                    f"[조작 정지] {self.idle_after_terminal:.2f}초 동안 "
+                    "아무 키도 누르지 않습니다."
+                )
+                time.sleep(self.idle_after_terminal)
+                self._press_ready_space("학습 에피소드 1 초기화")
+                self._log(
+                    f"[다음 에피소드 준비] |각도| <= "
+                    f"{self.upright_angle:.1f}도를 확인합니다."
+                )
+                time.sleep(self.idle_after_terminal)
+                self._press_ready_space("시작 스페이스 입력")
+                self._initial_untrained_game_running = False
+                self._angle_history.clear()
+                self._previous_angle = 0.0
+                return
+            time.sleep(0.05)
+
+        raise RuntimeError(
+            f"비학습 워밍업 게임이 {self.initial_tracking_timeout:.1f}초 안에 "
+            f"|각도| > {self.terminal_angle:.1f} 조건을 만족하지 못했습니다. "
+            f"마지막 상태: {last_info}"
+        )
+
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         options = options or {}
+
+        # SB3 모델 생성이 끝나고 처음 reset()이 호출되는 시점입니다.
+        # 이미 진행 중인 첫 게임은 학습에서 버리고 정상 재시작 후 EP 1을 반환합니다.
+        if self._initial_untrained_game_running:
+            self._finish_initial_untrained_game()
 
         # 정상 종료라면 step()에서 1초 대기와 준비 Space 입력까지 끝난 상태입니다.
         # 게임 도중 강제 reset 또는 시간 제한 종료만 전체 페이지를 다시 준비합니다.
@@ -325,7 +461,7 @@ class StorkGameEnv(gym.Env):
         time.sleep(0.10)
 
         observation, info = self._observe("진행 중")
-        info["episode"] = self._episode_number
+        info["episode_number"] = self._episode_number
         info["episode_started"] = True
 
         if self.render_mode == "human":
@@ -379,7 +515,7 @@ class StorkGameEnv(gym.Env):
                 f"{self.upright_angle:.1f}도를 확인한 뒤 시작 Space를 누릅니다."
             )
             time.sleep(self.idle_after_terminal)
-            self._press_ready_space(f"에피소드 {self._episode_number} 종료 후 초기화")
+            self._press_ready_space("시작 스페이스 입력")
         elif truncated:
             termination_reason = "time_limit"
             self._episode_active = False
@@ -389,7 +525,7 @@ class StorkGameEnv(gym.Env):
                 f"step={self._episode_steps}"
             )
 
-        info["episode"] = self._episode_number
+        info["episode_number"] = self._episode_number
         info["action"] = int(action)
         info["action_name"] = action_name
         info["termination_reason"] = termination_reason
@@ -447,7 +583,7 @@ if __name__ == "__main__":
                 total_reward += reward
                 if terminated or truncated:
                     print(
-                        f"[테스트 결과] episode={info['episode']} | "
+                        f"[테스트 결과] episode={info['episode_number']} | "
                         f"steps={info['episode_steps']} | "
                         f"reward={total_reward:.2f} | "
                         f"reason={info['termination_reason']}",
