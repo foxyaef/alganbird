@@ -15,7 +15,7 @@ class EnvironmentConfig:
     headless: bool = False
     initial_wait_seconds: float = 25.0
     upright_angle: float = 5.0
-    terminal_angle: float = 80.0
+    terminal_angle: float = 70.0
     idle_after_terminal: float = 4.0
     upright_timeout: float = 15.0
     upright_detection_retry_seconds: float = 3.0
@@ -46,10 +46,10 @@ class RewardConfig:
 
     # 각도 복원 방향 행동 보상
     # +각도에서는 왼쪽(0), -각도에서는 오른쪽(1)이 정답 행동입니다.
-    correct_direction_reward: float = 2.0
-    wrong_direction_penalty: float = -1.0
+    correct_direction_reward: float = 1.0
+    wrong_direction_penalty: float = -2.0
     # 0도 근처에서 좌우 보상이 빠르게 뒤집히는 것을 막는 무시 구간
-    direction_dead_zone: float = 2.0
+    direction_dead_zone: float = 10.0
 
     # 각도 검출 실패 및 에피소드 종료 감점
     detection_failure_penalty: float = -0.25

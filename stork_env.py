@@ -74,7 +74,7 @@ def detect_neck_angle(frame):
 
 class StorkGameEnv(gym.Env):
     """
-    행동: 0=왼쪽 방향키, 1=오른쪽 방향키
+    행동: 0=왼쪽 방향키, 1=오른쪽 방향키, 2=아무것도 하지 않음
     관측: [현재 각도/90, 각도 변화량/90, 검출 성공 여부]
 
     상태 흐름
@@ -133,7 +133,7 @@ class StorkGameEnv(gym.Env):
         self.max_episode_steps = int(max_episode_steps)
         self.print_status = bool(print_status)
 
-        self.action_space = spaces.Discrete(2)
+        self.action_space = spaces.Discrete(3)
         self.observation_space = spaces.Box(
             low=np.array([-1.0, -1.0, 0.0], dtype=np.float32),
             high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
@@ -472,16 +472,31 @@ class StorkGameEnv(gym.Env):
         if not self._episode_active:
             raise RuntimeError("step() 전에 reset()을 호출해야 합니다.")
         if not self.action_space.contains(action):
-            raise ValueError("action은 0(왼쪽) 또는 1(오른쪽)이어야 합니다.")
+            raise ValueError(
+                "action은 0(왼쪽), 1(오른쪽), 2(무행동) 중 하나여야 합니다."
+            )
 
-        key = "ArrowLeft" if int(action) == 0 else "ArrowRight"
-        action_name = "LEFT" if int(action) == 0 else "RIGHT"
-        self._page.keyboard.down(key)
-        try:
+        action_number = int(action)
+        if action_number == 0:
+            key = "ArrowLeft"
+            action_name = "LEFT"
+        elif action_number == 1:
+            key = "ArrowRight"
+            action_name = "RIGHT"
+        else:
+            key = None
+            action_name = "NOOP"
+
+        if key is None:
+            # 방향키를 누르지 않되 다른 행동과 동일한 시간 동안 기다립니다.
             time.sleep(self.action_duration)
-        finally:
-            # 종료 여부와 관계없이 방향키는 반드시 놓습니다.
-            self._page.keyboard.up(key)
+        else:
+            self._page.keyboard.down(key)
+            try:
+                time.sleep(self.action_duration)
+            finally:
+                # 종료 여부와 관계없이 방향키는 반드시 놓습니다.
+                self._page.keyboard.up(key)
         time.sleep(self.observation_delay)
 
         self._episode_steps += 1
@@ -526,7 +541,7 @@ class StorkGameEnv(gym.Env):
             )
 
         info["episode_number"] = self._episode_number
-        info["action"] = int(action)
+        info["action"] = action_number
         info["action_name"] = action_name
         info["termination_reason"] = termination_reason
 

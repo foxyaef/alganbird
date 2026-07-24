@@ -27,12 +27,15 @@ class ConfigurableRewardWrapper(gym.Wrapper):
         detection_penalty = 0.0 if detected else self.config.detection_failure_penalty
         terminal_penalty = self.config.terminal_penalty if terminated else 0.0
 
-        # action 0=왼쪽, action 1=오른쪽
-        # 양수 각도는 왼쪽으로, 음수 각도는 오른쪽으로 복원하도록 유도합니다.
+        # action 0=왼쪽, action 1=오른쪽, action 2=무행동
+        # 양수 각도는 왼쪽, 음수 각도는 오른쪽, 중심 근처는 무행동을 유도합니다.
         direction_reward = 0.0
         direction_correct = None
-        if detected and angle > self.config.direction_dead_zone:
-            correct_action = 0 if signed_angle > 0.0 else 1
+        if detected:
+            if angle <= self.config.direction_dead_zone:
+                correct_action = 2
+            else:
+                correct_action = 0 if signed_angle > 0.0 else 1
             direction_correct = action_number == correct_action
             direction_reward = (
                 self.config.correct_direction_reward
