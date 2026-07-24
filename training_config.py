@@ -13,16 +13,16 @@ class EnvironmentConfig:
     # 브라우저/게임 환경
     render_mode: Optional[str] = None
     headless: bool = False
-    initial_wait_seconds: float = 25.0
+    initial_wait_seconds: float = 20.0
     upright_angle: float = 5.0
     terminal_angle: float = 70.0
-    idle_after_terminal: float = 4.0
+    idle_after_terminal: float = 2.0
     upright_timeout: float = 15.0
     upright_detection_retry_seconds: float = 3.0
     upright_detection_max_retries: int = 1
     upright_fallen_retry_seconds: float = 3.0
     upright_fallen_max_retries: int = 1
-    # 최초 비학습 게임이 60도를 넘을 때까지 추적하는 최대 시간
+    # 최초 비학습 게임이 terminal_angle을 넘을 때까지 추적하는 최대 시간
     initial_tracking_timeout: float = 120.0
     action_duration: float = 0.06
     observation_delay: float = 0.025
@@ -35,11 +35,11 @@ class EnvironmentConfig:
 @dataclass
 class RewardConfig:
     # 매 스텝 생존 보상
-    alive_reward: float = 1.0
+    alive_reward: float = 5.0
 
     # 중심에 가까울수록 추가되는 보상
-    upright_bonus: float = 0.5
-    upright_bonus_angle: float = 10.0
+    upright_bonus: float = 3.0
+    upright_bonus_angle: float = 15.0
 
     # 각도가 커질수록 제곱으로 증가하는 감점
     angle_penalty: float = 1.0
@@ -112,9 +112,9 @@ ENV_CONFIG = EnvironmentConfig()
 REWARD_CONFIG = RewardConfig()
 
 DQN_RUN_CONFIG = RunConfig(
-    total_timesteps=5_000,
-    max_episodes=50,
-    # resume_model_path=r"models\dqn\20260724_132326\final_model.zip"
+    total_timesteps=100_000,
+    max_episodes=1_000,
+    resume_model_path=r"models\dqn\20260724_173919\final_model.zip"
 )
 DQN_CONFIG = DQNConfig()
 

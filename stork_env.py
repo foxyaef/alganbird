@@ -210,6 +210,28 @@ class StorkGameEnv(gym.Env):
         self._ready_space_pressed = True
         self._log(f"[{reason}] 준비 Space 입력 완료")
 
+    def _finish_upright_error_and_prepare_next_episode(self, reason):
+        """직립 오류를 종료로 처리하고 기존 다음 에피소드 준비 순서를 실행합니다."""
+        self._episode_active = False
+        self._log(f"[직립 오류로 에피소드 종료] {reason}")
+        self._log(
+            f"[조작 정지] {self.idle_after_terminal:.2f}초 동안 "
+            "어떤 키도 누르지 않습니다."
+        )
+        time.sleep(self.idle_after_terminal)
+        self._press_ready_space("직립 오류 종료 후 초기화")
+        self._log(
+            f"[다음 에피소드 준비] |각도| <= "
+            f"{self.upright_angle:.1f}도 확인 단계로 이동합니다."
+        )
+        time.sleep(self.idle_after_terminal)
+        # 기존 코드의 준비 Space입니다. 이후 _wait_until_upright()가
+        # 직립을 확인하고 reset()에서 Space를 한 번 더 눌러 시작합니다.
+        self._press_ready_space("시작 스페이스 입력")
+        self._angle_history.clear()
+        self._previous_angle = 0.0
+        self._last_line = None
+
     def _capture_frame(self):
         # cv_test.py와 동일하게 페이지 전체를 캡처합니다.
         screenshot = self._page.screenshot()
@@ -325,15 +347,19 @@ class StorkGameEnv(gym.Env):
                         >= self.upright_fallen_retry_seconds
                     ):
                         fallen_retry_count += 1
-                        self._page.keyboard.press("Space")
+                        self._finish_upright_error_and_prepare_next_episode(
+                            f"종료 각도 {info['angle_degrees']:+.2f}도가 "
+                            f"{fallen_seconds:.1f}초 지속"
+                        )
+                        deadline = time.monotonic() + self.upright_timeout
                         self._log(
                             "[직립 복구] "
                             f"종료 각도 {info['angle_degrees']:+.2f}도가 "
                             f"{fallen_seconds:.1f}초 지속 -> "
-                            f"스페이스 입력 ({fallen_retry_count}/"
+                            f"다음 에피소드 준비 완료 ({fallen_retry_count}/"
                             f"{self.upright_fallen_max_retries})"
                         )
-                        fallen_started = now
+                        fallen_started = time.monotonic()
                 else:
                     # 각도는 검출되고 있으며 아직 자연스럽게 직립 상태로
                     # 돌아오는 중인 5~60도 구간에서는 Space를 누르지 않습니다.
@@ -356,14 +382,17 @@ class StorkGameEnv(gym.Env):
                     >= self.upright_detection_retry_seconds
                 ):
                     detection_retry_count += 1
-                    self._page.keyboard.press("Space")
+                    self._finish_upright_error_and_prepare_next_episode(
+                        f"각도 미검출 {failure_seconds:.1f}초 지속"
+                    )
+                    deadline = time.monotonic() + self.upright_timeout
                     self._log(
                         "[직립 복구] "
                         f"각도 미검출 {failure_seconds:.1f}초 지속 -> "
-                        f"스페이스 입력 ({detection_retry_count}/"
+                        f"다음 에피소드 준비 완료 ({detection_retry_count}/"
                         f"{self.upright_detection_max_retries})"
                     )
-                    detection_failure_started = now
+                    detection_failure_started = time.monotonic()
             time.sleep(0.05)
 
         raise RuntimeError(
@@ -381,7 +410,7 @@ class StorkGameEnv(gym.Env):
         self._press_ready_space("강제 초기화")
 
     def _finish_initial_untrained_game(self):
-        """첫 게임은 행동 없이 60도 초과까지 관찰한 뒤 학습 준비 상태로 만듭니다."""
+        """첫 게임은 행동 없이 종료 각도 초과까지 관찰한 뒤 학습 준비 상태로 만듭니다."""
         self._log(
             "[비학습 워밍업 추적] 모델 준비 완료. 방향키를 누르지 않고 "
             f"|각도| > {self.terminal_angle:.1f}도가 될 때까지 기다립니다."
@@ -406,7 +435,7 @@ class StorkGameEnv(gym.Env):
                 self._press_ready_space("학습 에피소드 1 초기화")
                 self._log(
                     f"[다음 에피소드 준비] |각도| <= "
-                    f"{self.upright_angle:.1f}도를 확인합니다."
+                    f"{self.upright_angle:.1f}도를 확인한 뒤 시작 Space를 누릅니다."
                 )
                 time.sleep(self.idle_after_terminal)
                 self._press_ready_space("시작 스페이스 입력")
